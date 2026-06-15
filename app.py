@@ -1,13 +1,14 @@
+import json
+from pathlib import Path
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import DBSCAN
-from sklearn.decomposition import PCA
-from sklearn.metrics import silhouette_score, davies_bouldin_score
+
+DATA_DIR = Path("data")
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -106,51 +107,63 @@ def dark_layout(fig, title=""):
 
 
 # ─────────────────────────────────────────────
-# CARREGAMENTO E PROCESSAMENTO (com cache)
+# CARREGAMENTO (artefatos pré-processados ou fallback local)
 # ─────────────────────────────────────────────
-@st.cache_data(show_spinner="Loading and processing dataset...")
-def load_and_process():
+@st.cache_data(show_spinner="Loading dataset...")
+def load_artifacts():
+    processed = DATA_DIR / "processed.parquet"
+    dados_path = DATA_DIR / "dados.parquet"
+    meta_path = DATA_DIR / "meta.json"
+
+    if processed.is_file() and dados_path.is_file() and meta_path.is_file():
+        df = pd.read_parquet(processed)
+        dados = pd.read_parquet(dados_path)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        colunas_num = meta["colunas_num"]
+        sil = meta.get("silhouette")
+        dbi = meta.get("davies_bouldin")
+        iqr_out = pd.Series(meta["iqr_outliers"], name="count")
+        return df, dados, colunas_num, sil, dbi, iqr_out
+
+    return _load_and_process_fallback()
+
+
+def _load_and_process_fallback():
+    """Dev fallback when data/ artifacts are missing — runs full sklearn pipeline."""
+    from sklearn.cluster import DBSCAN
+    from sklearn.decomposition import PCA
+    from sklearn.metrics import davies_bouldin_score, silhouette_score
+    from sklearn.preprocessing import StandardScaler
+
     df = pd.read_csv("city_day.csv")
 
-    # --- Pré-processamento ---
-    # Remover colunas com > 60% de valores ausentes
     limite = len(df) * 0.4
     df = df.dropna(axis=1, thresh=limite)
-
-    # Remoção de duplicatas
     df = df.drop_duplicates()
 
-    # Selecionar apenas atributos numéricos
     colunas_num = df.select_dtypes(include=["float64", "int64"]).columns.tolist()
     dados = df[colunas_num].copy()
-
-    # Preencher ausentes com mediana (only on `dados` for ML — keep raw NaNs in `df` for plots, same as legacy app1.py)
     dados = dados.fillna(dados.median())
 
     scaler = StandardScaler()
     dados_pad = scaler.fit_transform(dados)
 
-    # --- DBSCAN ---
     modelo = DBSCAN(eps=0.8, min_samples=10)
     clusters = modelo.fit_predict(dados_pad)
     df["Cluster"] = clusters
     df["Anomalia"] = clusters == -1
 
-    # --- PCA 2D ---
     pca = PCA(n_components=2)
     coords = pca.fit_transform(dados_pad)
     df["PCA1"] = coords[:, 0]
     df["PCA2"] = coords[:, 1]
 
-    # --- Métricas ---
     mascara = df["Cluster"] != -1
     sil, dbi = None, None
-    # Full silhouette on all labeled points (matches legacy; subsampling was only for low-RAM hosts and changes the score)
-    if mascara.any() and len(set(df.loc[mascara, "Cluster"])) > 1:
+    if len(set(df.loc[mascara, "Cluster"])) > 1:
         sil = round(silhouette_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
         dbi = round(davies_bouldin_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
 
-    # IQR outliers
     Q1, Q3 = dados.quantile(0.25), dados.quantile(0.75)
     IQR = Q3 - Q1
     iqr_out = ((dados < (Q1 - 1.5 * IQR)) | (dados > (Q3 + 1.5 * IQR))).sum()
@@ -158,7 +171,7 @@ def load_and_process():
     return df, dados, colunas_num, sil, dbi, iqr_out
 
 
-df, dados, colunas_num, sil_score, dbi_score, iqr_outliers = load_and_process()
+df, dados, colunas_num, sil_score, dbi_score, iqr_outliers = load_artifacts()
 anomalias = df[df["Anomalia"]]
 normais   = df[~df["Anomalia"]]
 n_anom    = len(anomalias)
