@@ -128,9 +128,9 @@ def load_and_process():
     dados = dados.fillna(dados.median())
     df[colunas_num] = dados
 
-    # Padronização — float32 halves RAM vs float64 for sklearn inputs
+    # Padronização (float64 — same numerics as original pipeline; float32 can shift DBSCAN/PCA at boundaries)
     scaler = StandardScaler()
-    dados_pad = scaler.fit_transform(df[colunas_num]).astype(np.float32, copy=False)
+    dados_pad = scaler.fit_transform(df[colunas_num])
 
     # --- DBSCAN ---
     modelo = DBSCAN(eps=0.8, min_samples=10)
@@ -273,7 +273,7 @@ if aba == "📊 Visão Geral":
             hole=0.45,
         )
         dark_layout(fig_pie, "Normais vs Anomalias")
-        st.plotly_chart(fig_pie, width='stretch')
+        st.plotly_chart(fig_pie, use_container_width=True)
 
     with col2:
         # Bar cidade
@@ -285,7 +285,7 @@ if aba == "📊 Visão Geral":
             labels={"x": "Anomalias", "y": "Cidade"},
         )
         dark_layout(fig_city, "Anomalias por Cidade (Top 12)")
-        st.plotly_chart(fig_city, width='stretch')
+        st.plotly_chart(fig_city, use_container_width=True)
 
     # PCA scatter
     sample = df_f.sample(min(4000, len(df_f)), random_state=42)
@@ -298,7 +298,7 @@ if aba == "📊 Visão Geral":
         hover_data=["City", "Date"],
     )
     dark_layout(fig_pca, "Dispersão PCA — Clusters DBSCAN")
-    st.plotly_chart(fig_pca, width='stretch')
+    st.plotly_chart(fig_pca, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════
@@ -321,7 +321,7 @@ elif aba == "🔍 Análise Exploratória":
     st.markdown("### 📊 Estatísticas Descritivas")
     st.dataframe(
         dados.describe().round(2).T.rename(columns={"50%": "mediana"}),
-        width='stretch',
+        use_container_width=True,
     )
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
@@ -341,7 +341,7 @@ elif aba == "🔍 Análise Exploratória":
             labels={col_hist: col_hist, "Anomalia": "Tipo"},
         )
         dark_layout(fig_hist, f"Distribuição de {col_hist}")
-        st.plotly_chart(fig_hist, width='stretch')
+        st.plotly_chart(fig_hist, use_container_width=True)
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -356,7 +356,7 @@ elif aba == "🔍 Análise Exploratória":
             color_discrete_map={False: COLOR_NORMAL, True: COLOR_ANOMALY},
         )
         dark_layout(fig_box, "Boxplots por Poluente (primeiros 6)")
-        st.plotly_chart(fig_box, width='stretch')
+        st.plotly_chart(fig_box, use_container_width=True)
 
     with col4:
         # Outliers IQR
@@ -369,7 +369,7 @@ elif aba == "🔍 Análise Exploratória":
             color_discrete_sequence=["#f59e0b"],
         )
         dark_layout(fig_iqr, "Outliers por Atributo (Método IQR)")
-        st.plotly_chart(fig_iqr, width='stretch')
+        st.plotly_chart(fig_iqr, use_container_width=True)
 
     st.markdown("### 🔥 Mapa de Correlação")
     corr = dados.corr().round(2)
@@ -381,7 +381,7 @@ elif aba == "🔍 Análise Exploratória":
     )
     dark_layout(fig_corr, "Correlação entre Poluentes")
     fig_corr.update_layout(height=480)
-    st.plotly_chart(fig_corr, width='stretch')
+    st.plotly_chart(fig_corr, use_container_width=True)
 
     st.markdown(
         '<div class="info-box">'
@@ -463,7 +463,7 @@ elif aba == "⚙️ Algoritmo & Métricas":
     )
     dark_layout(fig_cl, "Distribuição de Registros por Cluster")
     fig_cl.update_layout(showlegend=False)
-    st.plotly_chart(fig_cl, width='stretch')
+    st.plotly_chart(fig_cl, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════
@@ -498,7 +498,7 @@ elif aba == "🚨 Registros Anômalos":
 
     st.dataframe(
         tabela.head(n_rows),
-        width='stretch',
+        use_container_width=True,
         height=420,
     )
     st.caption(f"Exibindo {min(n_rows, len(tabela))} de {len(tabela)} registros anômalos")
@@ -524,7 +524,7 @@ elif aba == "🚨 Registros Anômalos":
             color_discrete_sequence=[COLOR_ANOMALY],
         )
         dark_layout(fig_pct, "% de Anomalias por Cidade")
-        st.plotly_chart(fig_pct, width='stretch')
+        st.plotly_chart(fig_pct, use_container_width=True)
 
     with col4:
         # Anomalias ao longo do tempo
@@ -538,7 +538,7 @@ elif aba == "🚨 Registros Anômalos":
         )
         dark_layout(fig_ts, "Anomalias ao Longo do Tempo")
         fig_ts.update_xaxes(tickangle=45, nticks=12)
-        st.plotly_chart(fig_ts, width='stretch')
+        st.plotly_chart(fig_ts, use_container_width=True)
 
     # Comparativo médias anomalias vs normais
     st.markdown("### Comparativo: Média dos Poluentes — Anomalias vs Normais")
@@ -553,7 +553,7 @@ elif aba == "🚨 Registros Anômalos":
     fig_comp.add_bar(x=comp["Poluente"], y=comp["Anomalia"], name="Anomalia", marker_color=COLOR_ANOMALY)
     dark_layout(fig_comp, "Média dos Poluentes — Normais vs Anomalias")
     fig_comp.update_layout(barmode="group")
-    st.plotly_chart(fig_comp, width='stretch')
+    st.plotly_chart(fig_comp, use_container_width=True)
 
 
 # ═══════════════════════════════════════════════
