@@ -1,14 +1,13 @@
-import json
-import os
-from pathlib import Path
-
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-DATA_DIR = Path("data")
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import DBSCAN
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -107,82 +106,51 @@ def dark_layout(fig, title=""):
 
 
 # ─────────────────────────────────────────────
-# CARREGAMENTO (artefatos pré-processados ou fallback local)
+# CARREGAMENTO E PROCESSAMENTO (com cache)
 # ─────────────────────────────────────────────
-def _artifacts_present() -> bool:
-    return all(
-        (DATA_DIR / name).is_file()
-        for name in ("processed.parquet", "dados.parquet", "meta.json")
-    )
-
-
-def _is_render_deploy() -> bool:
-    return os.environ.get("RENDER", "").lower() == "true"
-
-
-def _missing_artifacts_message() -> str:
-    return (
-        "Artefatos em `data/` não encontrados no servidor. "
-        "No Render, o app não pode recalcular DBSCAN/Silhouette (512 MB RAM). "
-        "Execute `python preprocess.py` localmente, faça `git add data/` e "
-        "envie o commit para o GitHub antes do deploy."
-    )
-
-
-@st.cache_data(show_spinner="Loading dataset...")
-def load_artifacts():
-    if not _artifacts_present():
-        if _is_render_deploy():
-            st.error(_missing_artifacts_message())
-            st.stop()
-        return _load_and_process_fallback()
-
-    df = pd.read_parquet(DATA_DIR / "processed.parquet")
-    dados = pd.read_parquet(DATA_DIR / "dados.parquet")
-    meta = json.loads((DATA_DIR / "meta.json").read_text(encoding="utf-8"))
-    colunas_num = meta["colunas_num"]
-    sil = meta.get("silhouette")
-    dbi = meta.get("davies_bouldin")
-    iqr_out = pd.Series(meta["iqr_outliers"], name="count")
-    return df, dados, colunas_num, sil, dbi, iqr_out
-
-
-def _load_and_process_fallback():
-    """Dev fallback when data/ artifacts are missing — runs full sklearn pipeline."""
-    from sklearn.cluster import DBSCAN
-    from sklearn.decomposition import PCA
-    from sklearn.metrics import davies_bouldin_score, silhouette_score
-    from sklearn.preprocessing import StandardScaler
-
+@st.cache_data
+def load_and_process():
     df = pd.read_csv("city_day.csv")
 
+    # --- Pré-processamento ---
+    # Remover colunas com > 60% de valores ausentes
     limite = len(df) * 0.4
     df = df.dropna(axis=1, thresh=limite)
+
+    # Remoção de duplicatas
     df = df.drop_duplicates()
 
+    # Selecionar apenas atributos numéricos
     colunas_num = df.select_dtypes(include=["float64", "int64"]).columns.tolist()
     dados = df[colunas_num].copy()
+
+    # Preencher ausentes com mediana
     dados = dados.fillna(dados.median())
 
+    # Padronização
     scaler = StandardScaler()
     dados_pad = scaler.fit_transform(dados)
 
+    # --- DBSCAN ---
     modelo = DBSCAN(eps=0.8, min_samples=10)
     clusters = modelo.fit_predict(dados_pad)
     df["Cluster"] = clusters
     df["Anomalia"] = clusters == -1
 
+    # --- PCA 2D ---
     pca = PCA(n_components=2)
     coords = pca.fit_transform(dados_pad)
     df["PCA1"] = coords[:, 0]
     df["PCA2"] = coords[:, 1]
 
+    # --- Métricas ---
     mascara = df["Cluster"] != -1
     sil, dbi = None, None
     if len(set(df.loc[mascara, "Cluster"])) > 1:
         sil = round(silhouette_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
         dbi = round(davies_bouldin_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
 
+    # IQR outliers
     Q1, Q3 = dados.quantile(0.25), dados.quantile(0.75)
     IQR = Q3 - Q1
     iqr_out = ((dados < (Q1 - 1.5 * IQR)) | (dados > (Q3 + 1.5 * IQR))).sum()
@@ -190,7 +158,7 @@ def _load_and_process_fallback():
     return df, dados, colunas_num, sil, dbi, iqr_out
 
 
-df, dados, colunas_num, sil_score, dbi_score, iqr_outliers = load_artifacts()
+df, dados, colunas_num, sil_score, dbi_score, iqr_outliers = load_and_process()
 anomalias = df[df["Anomalia"]]
 normais   = df[~df["Anomalia"]]
 n_anom    = len(anomalias)
@@ -291,7 +259,7 @@ if aba == "📊 Visão Geral":
             hole=0.45,
         )
         dark_layout(fig_pie, "Normais vs Anomalias")
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie, width='stretch')
 
     with col2:
         # Bar cidade
@@ -303,7 +271,7 @@ if aba == "📊 Visão Geral":
             labels={"x": "Anomalias", "y": "Cidade"},
         )
         dark_layout(fig_city, "Anomalias por Cidade (Top 12)")
-        st.plotly_chart(fig_city, use_container_width=True)
+        st.plotly_chart(fig_city, width='stretch')
 
     # PCA scatter
     sample = df_f.sample(min(4000, len(df_f)), random_state=42)
@@ -316,7 +284,7 @@ if aba == "📊 Visão Geral":
         hover_data=["City", "Date"],
     )
     dark_layout(fig_pca, "Dispersão PCA — Clusters DBSCAN")
-    st.plotly_chart(fig_pca, use_container_width=True)
+    st.plotly_chart(fig_pca, width='stretch')
 
 
 # ═══════════════════════════════════════════════
@@ -339,7 +307,7 @@ elif aba == "🔍 Análise Exploratória":
     st.markdown("### 📊 Estatísticas Descritivas")
     st.dataframe(
         dados.describe().round(2).T.rename(columns={"50%": "mediana"}),
-        use_container_width=True,
+        width='stretch',
     )
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
@@ -359,7 +327,7 @@ elif aba == "🔍 Análise Exploratória":
             labels={col_hist: col_hist, "Anomalia": "Tipo"},
         )
         dark_layout(fig_hist, f"Distribuição de {col_hist}")
-        st.plotly_chart(fig_hist, use_container_width=True)
+        st.plotly_chart(fig_hist, width='stretch')
 
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -374,7 +342,7 @@ elif aba == "🔍 Análise Exploratória":
             color_discrete_map={False: COLOR_NORMAL, True: COLOR_ANOMALY},
         )
         dark_layout(fig_box, "Boxplots por Poluente (primeiros 6)")
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(fig_box, width='stretch')
 
     with col4:
         # Outliers IQR
@@ -387,7 +355,7 @@ elif aba == "🔍 Análise Exploratória":
             color_discrete_sequence=["#f59e0b"],
         )
         dark_layout(fig_iqr, "Outliers por Atributo (Método IQR)")
-        st.plotly_chart(fig_iqr, use_container_width=True)
+        st.plotly_chart(fig_iqr, width='stretch')
 
     st.markdown("### 🔥 Mapa de Correlação")
     corr = dados.corr().round(2)
@@ -399,7 +367,7 @@ elif aba == "🔍 Análise Exploratória":
     )
     dark_layout(fig_corr, "Correlação entre Poluentes")
     fig_corr.update_layout(height=480)
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width='stretch')
 
     st.markdown(
         '<div class="info-box">'
@@ -481,7 +449,7 @@ elif aba == "⚙️ Algoritmo & Métricas":
     )
     dark_layout(fig_cl, "Distribuição de Registros por Cluster")
     fig_cl.update_layout(showlegend=False)
-    st.plotly_chart(fig_cl, use_container_width=True)
+    st.plotly_chart(fig_cl, width='stretch')
 
 
 # ═══════════════════════════════════════════════
@@ -516,7 +484,7 @@ elif aba == "🚨 Registros Anômalos":
 
     st.dataframe(
         tabela.head(n_rows),
-        use_container_width=True,
+        width='stretch',
         height=420,
     )
     st.caption(f"Exibindo {min(n_rows, len(tabela))} de {len(tabela)} registros anômalos")
@@ -542,7 +510,7 @@ elif aba == "🚨 Registros Anômalos":
             color_discrete_sequence=[COLOR_ANOMALY],
         )
         dark_layout(fig_pct, "% de Anomalias por Cidade")
-        st.plotly_chart(fig_pct, use_container_width=True)
+        st.plotly_chart(fig_pct, width='stretch')
 
     with col4:
         # Anomalias ao longo do tempo
@@ -556,7 +524,7 @@ elif aba == "🚨 Registros Anômalos":
         )
         dark_layout(fig_ts, "Anomalias ao Longo do Tempo")
         fig_ts.update_xaxes(tickangle=45, nticks=12)
-        st.plotly_chart(fig_ts, use_container_width=True)
+        st.plotly_chart(fig_ts, width='stretch')
 
     # Comparativo médias anomalias vs normais
     st.markdown("### Comparativo: Média dos Poluentes — Anomalias vs Normais")
@@ -571,7 +539,7 @@ elif aba == "🚨 Registros Anômalos":
     fig_comp.add_bar(x=comp["Poluente"], y=comp["Anomalia"], name="Anomalia", marker_color=COLOR_ANOMALY)
     dark_layout(fig_comp, "Média dos Poluentes — Normais vs Anomalias")
     fig_comp.update_layout(barmode="group")
-    st.plotly_chart(fig_comp, use_container_width=True)
+    st.plotly_chart(fig_comp, width='stretch')
 
 
 # ═══════════════════════════════════════════════

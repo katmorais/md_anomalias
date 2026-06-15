@@ -1,0 +1,32 @@
+{
+  "colunas_num": [
+    "PM2.5",
+    "PM10",
+    "NO",
+    "NO2",
+    "NOx",
+    "NH3",
+    "CO",
+    "SO2",
+    "O3",
+    "Benzene",
+    "Toluene",
+    "AQI"
+  ],
+  "silhouette": 0.173,
+  "davies_bouldin": 0.7192,
+  "iqr_outliers": {
+    "PM2.5": 2736,
+    "PM10": 5322,
+    "NO": 3199,
+    "NO2": 1743,
+    "NOx": 2629,
+    "NH3": 3517,
+    "CO": 2747,
+    "SO2": 3154,
+    "O3": 1181,
+    "Benzene": 2646,
+    "Toluene": 3915,
+    "AQI": 3192
+  }
+}
