@@ -124,13 +124,11 @@ def load_and_process():
     colunas_num = df.select_dtypes(include=["float64", "int64"]).columns.tolist()
     dados = df[colunas_num].copy()
 
-    # Preencher ausentes com mediana (persist into df so we do not duplicate a full frame in cache)
+    # Preencher ausentes com mediana (only on `dados` for ML — keep raw NaNs in `df` for plots, same as legacy app1.py)
     dados = dados.fillna(dados.median())
-    df[colunas_num] = dados
 
-    # Padronização (float64 — same numerics as original pipeline; float32 can shift DBSCAN/PCA at boundaries)
     scaler = StandardScaler()
-    dados_pad = scaler.fit_transform(df[colunas_num])
+    dados_pad = scaler.fit_transform(dados)
 
     # --- DBSCAN ---
     modelo = DBSCAN(eps=0.8, min_samples=10)
@@ -147,32 +145,20 @@ def load_and_process():
     # --- Métricas ---
     mascara = df["Cluster"] != -1
     sil, dbi = None, None
-    if mascara.any() and df.loc[mascara, "Cluster"].nunique() > 1:
-        Xs = dados_pad[mascara.to_numpy()]
-        ys = df.loc[mascara, "Cluster"].to_numpy()
-        # Full silhouette_score builds pairwise distances — O(n^2) RAM/time (~GBs at ~23k rows).
-        # Subsample for a stable approximation on large non-noise sets (avoids OOM / proxy 502 on small hosts).
-        n_lab = Xs.shape[0]
-        if n_lab > 4000:
-            sil = round(
-                silhouette_score(Xs, ys, sample_size=4000, random_state=42),
-                4,
-            )
-        else:
-            sil = round(silhouette_score(Xs, ys), 4)
-        dbi = round(davies_bouldin_score(Xs, ys), 4)
+    # Full silhouette on all labeled points (matches legacy; subsampling was only for low-RAM hosts and changes the score)
+    if mascara.any() and len(set(df.loc[mascara, "Cluster"])) > 1:
+        sil = round(silhouette_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
+        dbi = round(davies_bouldin_score(dados_pad[mascara], df.loc[mascara, "Cluster"]), 4)
 
     # IQR outliers
-    num = df[colunas_num]
-    Q1, Q3 = num.quantile(0.25), num.quantile(0.75)
+    Q1, Q3 = dados.quantile(0.25), dados.quantile(0.75)
     IQR = Q3 - Q1
-    iqr_out = ((num < (Q1 - 1.5 * IQR)) | (num > (Q3 + 1.5 * IQR))).sum()
+    iqr_out = ((dados < (Q1 - 1.5 * IQR)) | (dados > (Q3 + 1.5 * IQR))).sum()
 
-    return df, colunas_num, sil, dbi, iqr_out
+    return df, dados, colunas_num, sil, dbi, iqr_out
 
 
-df, colunas_num, sil_score, dbi_score, iqr_outliers = load_and_process()
-dados = df[colunas_num]
+df, dados, colunas_num, sil_score, dbi_score, iqr_outliers = load_and_process()
 anomalias = df[df["Anomalia"]]
 normais   = df[~df["Anomalia"]]
 n_anom    = len(anomalias)
